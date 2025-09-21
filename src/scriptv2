@@ -53,7 +53,7 @@ def get_vehicle_positions(routes):
                 "direction": v.trip.direction_id if v.trip.HasField("direction_id") else None,
                 "latitude": v.position.latitude if v.position else None,
                 "longitude": v.position.longitude if v.position else None,
-                "occupancy": v.occupancy_status if v.HasField("occupancy_status") else None
+                #"occupancy": v.occupancy_status if v.HasField("occupancy_status") else None
             })
 
     return pd.DataFrame(vehicles)
