@@ -1,6 +1,3 @@
-#pip install pandas
-#pip install gtfs-realtime-bindings
-
 import requests, zipfile, io, os, pandas as pd
 from google.transit import gtfs_realtime_pb2
 
@@ -68,6 +65,12 @@ if __name__ == "__main__":
     # Example: show first 5 vehicles
     print(df.head(5))
 
-    # Example: show all vehicles on line 506
-    print(df[df["line_number"] == "506"])
+    # Example: show all vehicles on line 2
+    print(df[df["line_number"] == "2"])
+
+    # Save to Desktop
+    desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+    csv_path = os.path.join(desktop_dir, "hsl_vehicle_positions.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"Saved vehicle positions to {csv_path}")
 
