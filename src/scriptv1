@@ -1,0 +1,52 @@
+#pip install pandas
+#pip install gtfs-realtime-bindings
+
+import requests
+import zipfile
+import io
+import pandas as pd
+from google.transit import gtfs_realtime_pb2
+
+# --------------------------
+# 1. Download & read static GTFS
+# --------------------------
+static_gtfs_url = "https://transitfeeds.com/p/helsinki-regional-transport/735/latest/download"  # HSL GTFS static feed
+
+r = requests.get(static_gtfs_url)
+with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+    with z.open("routes.txt") as routes_file:
+        routes = pd.read_csv(routes_file)
+
+# Create mapping: route_id -> route_short_name
+route_map = dict(zip(routes["route_id"].astype(str), routes["route_short_name"]))
+
+# --------------------------
+# 2. Fetch GTFS-RT vehicle positions
+# --------------------------
+rt_url = "https://realtime.hsl.fi/realtime/vehicle-positions/v2/hsl"
+resp = requests.get(rt_url)
+
+feed = gtfs_realtime_pb2.FeedMessage()
+feed.ParseFromString(resp.content)
+
+# --------------------------
+# 3. Decode & match to static routes
+# --------------------------
+for entity in feed.entity:
+    if entity.HasField("vehicle"):
+        vehicle = entity.vehicle
+        vehicle_id = vehicle.vehicle.id
+
+        route_id = vehicle.trip.route_id if vehicle.trip.HasField("route_id") else None
+        direction = vehicle.trip.direction_id if vehicle.trip.HasField("direction_id") else None
+
+        # Map to line number
+        line_number = route_map.get(route_id, "Unknown")
+
+        print(f"Vehicle ID: {vehicle_id}")
+        print(f"  Route ID: {route_id} -> Line {line_number}, Direction: {direction}")
+        if vehicle.position:
+            print(f"  Position: lat={vehicle.position.latitude}, lon={vehicle.position.longitude}")
+        if vehicle.HasField("occupancy_status"):
+            print(f"  Occupancy: {vehicle.occupancy_status}")
+        print("-" * 30)
