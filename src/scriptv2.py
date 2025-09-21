@@ -1,3 +1,6 @@
+#pip install pandas
+#pip install gtfs-realtime-bindings
+
 import requests, zipfile, io, os, pandas as pd
 from google.transit import gtfs_realtime_pb2
 
@@ -67,3 +70,4 @@ if __name__ == "__main__":
 
     # Example: show all vehicles on line 506
     print(df[df["line_number"] == "506"])
+
