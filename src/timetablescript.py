@@ -1,3 +1,6 @@
+#EXTRACT THE GTFS FILE IN THE SAME DIRECTORY AS THE SCRIPT
+
+
 import pandas as pd
 from math import radians, cos, sin, asin, sqrt
 from datetime import datetime, timedelta
