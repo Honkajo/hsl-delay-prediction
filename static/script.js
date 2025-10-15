@@ -13,7 +13,7 @@ async function loadData() {
   } catch (err) {
     console.error("Failed to load vehicle data:", err);
     document.getElementById("output").innerHTML =
-      `<div class="empty">Could not load live data. Try again later.</div>`;
+      `<div class="empty">Could not load data. Try again later.</div>`;
   }
 }
 
@@ -44,8 +44,6 @@ function populateDropdown() {
 
 function renderLine(lineNumber) {
   const rows = dataCache.filter(d => d.line_number === lineNumber);
-  const fmt = n => (n === null || n === undefined || Number.isNaN(n) ? "" : Number(n).toFixed(6));
-
   if (rows.length === 0) {
     document.getElementById("output").innerHTML =
       `<div class="empty">No active vehicles on line ${lineNumber}.</div>`;
@@ -58,10 +56,10 @@ function renderLine(lineNumber) {
       <thead>
         <tr>
           <th>Vehicle ID</th>
-          <th>Route ID</th>
-          <th>Direction</th>
           <th>Latitude</th>
           <th>Longitude</th>
+          <th>Predicted Delay (sec)</th>
+          <th>Predicted Delay (min)</th>
         </tr>
       </thead>
       <tbody>
@@ -71,10 +69,10 @@ function renderLine(lineNumber) {
     html += `
       <tr>
         <td>${r.vehicle_id ?? ""}</td>
-        <td>${r.route_id ?? ""}</td>
-        <td>${r.direction ?? ""}</td>
-        <td>${fmt(r.latitude)}</td>
-        <td>${fmt(r.longitude)}</td>
+        <td>${r.latitude?.toFixed(5) ?? ""}</td>
+        <td>${r.longitude?.toFixed(5) ?? ""}</td>
+        <td>${r.pred_delay_seconds ?? ""}</td>
+        <td>${r.pred_delay_minutes ?? ""}</td>
       </tr>`;
   });
 
@@ -92,8 +90,7 @@ function showRaw() {
 
 function updateTimestamp() {
   const now = new Date();
-  document.getElementById("updated").textContent =
-    `Last updated: ${now.toLocaleTimeString()}`;
+  document.getElementById("updated").textContent = `Last updated: ${now.toLocaleTimeString()}`;
 }
 
 function startAutoRefresh(intervalMs = 30000) {
@@ -121,3 +118,4 @@ document.getElementById("lineSelect").addEventListener("change", (e) => {
 });
 
 loadData().then(() => startAutoRefresh(15000));
+
