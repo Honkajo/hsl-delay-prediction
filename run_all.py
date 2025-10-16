@@ -23,7 +23,7 @@ GTFS_ZIP = "https://transitfeeds.com/p/helsinki-regional-transport/735/latest/do
 app = Flask(__name__)
 
 # ==========================================================
-# STATIC + REALTIME DATA HELPERS (from scriptv2.py)
+# STATIC + REALTIME DATA HELPERS
 # ==========================================================
 
 def load_routes():
@@ -66,6 +66,7 @@ def get_vehicle_positions(routes):
 
         vehicles.append({
             "vehicle_id": v.vehicle.id,
+            "trip_id": v.trip.trip_id if v.trip.HasField("trip_id") else None,
             "route_id": route_id,
             "line_number": route_map.get(str(route_id), "Unknown"),
             "direction": v.trip.direction_id if v.trip.HasField("direction_id") else None,
@@ -80,13 +81,13 @@ def get_vehicle_positions(routes):
 
 
 # ==========================================================
-# DATA COLLECTION FOR TABLEAU (multi-round fetch)
+# DATA COLLECTION FOR TABLEAU
 # ==========================================================
 
-def create_clean_data(rounds=9, delay_between=20):
-    print(f"🧹 Collecting realtime HSL data ({rounds} rounds every {delay_between}s)…")
+def create_clean_data(rounds=1, delay_between=0):
+    print(f"🧹 Collecting realtime HSL data ({rounds} round)…")
 
-    # Download static GTFS once
+    # Load GTFS static files
     r = requests.get(GTFS_ZIP)
     z = zipfile.ZipFile(io.BytesIO(r.content))
     with z.open("stop_times.txt") as f: stop_times = pd.read_csv(f)
@@ -106,69 +107,89 @@ def create_clean_data(rounds=9, delay_between=20):
         a = np.sin(dlat/2)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon/2)**2
         return 2 * R * np.arcsin(np.sqrt(a))
 
+    def parse_gtfs_time(t):
+        try:
+            h, m, s = map(int, t.split(":"))
+            return h * 3600 + m * 60 + s
+        except:
+            return np.nan
+
     all_rows = []
 
-    for i in range(rounds):
-        print(f"⏱️ Round {i+1}/{rounds} fetching realtime positions…")
-        feed = gtfs_realtime_pb2.FeedMessage()
-        try:
-            resp = requests.get("https://realtime.hsl.fi/realtime/vehicle-positions/v2/hsl", timeout=15)
-            feed.ParseFromString(resp.content)
-        except Exception as e:
-            print("⚠️ Realtime fetch failed:", e)
-            time.sleep(delay_between)
+    print("⏱️ Fetching realtime positions (1 round)…")
+    feed = gtfs_realtime_pb2.FeedMessage()
+    try:
+        resp = requests.get("https://realtime.hsl.fi/realtime/vehicle-positions/v2/hsl", timeout=15)
+        feed.ParseFromString(resp.content)
+    except Exception as e:
+        print("⚠️ Realtime fetch failed:", e)
+        return pd.DataFrame([])
+
+    now = datetime.now(TZ)
+    for e in feed.entity:
+        if not e.HasField("vehicle"):
+            continue
+        v = e.vehicle
+        route_id = v.trip.route_id if v.trip.HasField("route_id") else None
+        trip_id = v.trip.trip_id if v.trip.HasField("trip_id") else None
+        if not route_id or str(route_id) not in route_map:
+            continue
+        line_number = route_map[str(route_id)]
+        lat = v.position.latitude if v.HasField("position") else None
+        lon = v.position.longitude if v.HasField("position") else None
+        ts_dt = datetime.fromtimestamp(v.timestamp, pytz.utc).astimezone(TZ) if v.HasField("timestamp") else now
+
+        # ✅ Prefer trip-based stop times if available
+        if trip_id and trip_id in stop_times["trip_id"].values:
+            stops_df = stop_times[stop_times["trip_id"] == trip_id].copy()
+        else:
+            stops_df = stop_times[stop_times["route_id"] == route_id].copy()
+
+        if stops_df.empty or lat is None or lon is None:
             continue
 
-        now = datetime.now(TZ)
-        for e in feed.entity:
-            if not e.HasField("vehicle"):
-                continue
-            v = e.vehicle
-            route_id = v.trip.route_id if v.trip.HasField("route_id") else None
-            if not route_id or str(route_id) not in route_map:
-                continue
-            line_number = route_map[str(route_id)]
-            lat = v.position.latitude if v.HasField("position") else None
-            lon = v.position.longitude if v.HasField("position") else None
-            ts_dt = datetime.fromtimestamp(v.timestamp, pytz.utc).astimezone(TZ) if v.HasField("timestamp") else now
+        # --- nearest stop by space + past time ---
+        stops_df["dist"] = haversine(lat, lon, stops_df["stop_lat"], stops_df["stop_lon"])
+        stops_df["sched_sec"] = stops_df["arrival_time"].apply(parse_gtfs_time)
+        current_sec = ts_dt.hour * 3600 + ts_dt.minute * 60 + ts_dt.second
+        stops_df = stops_df[stops_df["sched_sec"] <= current_sec + 300]
+        if stops_df.empty:
+            continue
+        stops_df["score"] = stops_df["dist"] + (current_sec - stops_df["sched_sec"]) * 5
+        nearest = stops_df.loc[stops_df["score"].idxmin()]
+        # -----------------------------------------
 
-            stops_df = stop_times[stop_times["route_id"] == route_id]
-            if stops_df.empty or lat is None or lon is None:
-                continue
-            stops_df = stops_df.copy()
-            stops_df["dist"] = haversine(lat, lon, stops_df["stop_lat"], stops_df["stop_lon"])
-            nearest = stops_df.loc[stops_df["dist"].idxmin()]
+        try:
+            h, m, s = [int(x) for x in nearest["arrival_time"].split(":")]
+        except Exception:
+            continue
+        day_offset, h_norm = divmod(h, 24)
 
-            try:
-                h, m, s = [int(x) for x in nearest["arrival_time"].split(":")]
-            except Exception:
-                continue
-            scheduled = datetime(ts_dt.year, ts_dt.month, ts_dt.day, h % 24, m, s, tzinfo=TZ)
-            if h >= 24:
-                scheduled += timedelta(days=h // 24)
-            delay = (ts_dt - scheduled).total_seconds()
-            if abs(delay) > 7200:  # ±2 hours
-                continue
+        # ✅ Proper local timezone alignment
+        scheduled = TZ.localize(datetime(ts_dt.year, ts_dt.month, ts_dt.day, h_norm, m, s)) + timedelta(days=day_offset)
 
-            all_rows.append({
-                "timestamp_local": ts_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                "date": ts_dt.date().isoformat(),
-                "hour": ts_dt.hour,
-                "dow": ts_dt.weekday(),
-                "is_weekend": int(ts_dt.weekday() >= 5),
-                "season": ["winter","winter","spring","spring","spring","summer","summer","summer","autumn","autumn","autumn","winter"][ts_dt.month-1],
-                "line_number": line_number,
-                "route_id": route_id,
-                "vehicle_id": v.vehicle.id,
-                "nearest_stop": nearest["stop_id"],
-                "latitude": lat,
-                "longitude": lon,
-                "delay_seconds": int(delay),
-                "delay_minutes": round(delay / 60, 2)
-            })
+        delay = (ts_dt - scheduled).total_seconds()
+        if abs(delay) > 7200:
+            continue
 
-        if i < rounds - 1:
-            time.sleep(delay_between)
+        all_rows.append({
+            "timestamp_local": ts_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "date": ts_dt.date().isoformat(),
+            "hour": ts_dt.hour,
+            "dow": ts_dt.weekday(),
+            "is_weekend": int(ts_dt.weekday() >= 5),
+            "season": ["winter","winter","spring","spring","spring","summer","summer","summer","autumn","autumn","autumn","winter"][ts_dt.month-1],
+            "line_number": line_number,
+            "route_id": route_id,
+            "trip_id": trip_id,
+            "vehicle_id": v.vehicle.id,
+            "nearest_stop": nearest["stop_id"],
+            "latitude": lat,
+            "longitude": lon,
+            "delay_seconds": int(delay),
+            "delay_minutes": round(delay / 60, 2),
+            "delay_minutes_abs": round(abs(delay) / 60, 2)
+        })
 
     df_new = pd.DataFrame(all_rows)
     print(f"✅ Collected {len(df_new)} rows from realtime feed")
@@ -213,7 +234,10 @@ def vehicle_positions():
 
 if __name__ == "__main__":
     print("🚀 Starting data collection and Flask server...")
-    create_clean_data(rounds=9, delay_between=20)
+    create_clean_data(rounds=1, delay_between=0)
     print("🌐 Starting Flask at http://127.0.0.1:5000")
     app.run(debug=False)
+
+
+
 

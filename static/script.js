@@ -58,8 +58,8 @@ function renderLine(lineNumber) {
           <th>Vehicle ID</th>
           <th>Latitude</th>
           <th>Longitude</th>
-          <th>Predicted Delay (sec)</th>
           <th>Predicted Delay (min)</th>
+          <th>Predicted Delay (sec)</th>
         </tr>
       </thead>
       <tbody>
