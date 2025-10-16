@@ -95,8 +95,8 @@ def create_clean_data(rounds=1, delay_between=0):
     with z.open("trips.txt") as f: trips = pd.read_csv(f)
     with z.open("routes.txt") as f: routes = pd.read_csv(f)
 
-    stop_times = stop_times.merge(stops[["stop_id","stop_lat","stop_lon"]], on="stop_id", how="left")
-    stop_times = stop_times.merge(trips[["trip_id","route_id"]], on="trip_id", how="left")
+    stop_times = stop_times.merge(stops[["stop_id", "stop_lat", "stop_lon"]], on="stop_id", how="left")
+    stop_times = stop_times.merge(trips[["trip_id", "route_id"]], on="trip_id", how="left")
     route_map = dict(zip(routes["route_id"].astype(str), routes["route_short_name"]))
 
     def haversine(lat1, lon1, lat2, lon2):
@@ -143,21 +143,26 @@ def create_clean_data(rounds=1, delay_between=0):
         if trip_id and trip_id in stop_times["trip_id"].values:
             stops_df = stop_times[stop_times["trip_id"] == trip_id].copy()
         else:
+            # 🧭 New fix: route-based fallback with ±15 min time window
             stops_df = stop_times[stop_times["route_id"] == route_id].copy()
+            if stops_df.empty:
+                continue
+            stops_df["sched_sec"] = stops_df["arrival_time"].apply(parse_gtfs_time)
+            current_sec = ts_dt.hour * 3600 + ts_dt.minute * 60 + ts_dt.second
+            window = 300
+            stops_df = stops_df[
+                (stops_df["sched_sec"] >= current_sec - window) &
+                (stops_df["sched_sec"] <= current_sec + window)
+            ]
 
         if stops_df.empty or lat is None or lon is None:
             continue
 
-        # --- nearest stop by space + past time ---
+        # --- nearest stop by distance + schedule proximity ---
         stops_df["dist"] = haversine(lat, lon, stops_df["stop_lat"], stops_df["stop_lon"])
-        stops_df["sched_sec"] = stops_df["arrival_time"].apply(parse_gtfs_time)
-        current_sec = ts_dt.hour * 3600 + ts_dt.minute * 60 + ts_dt.second
-        stops_df = stops_df[stops_df["sched_sec"] <= current_sec + 300]
-        if stops_df.empty:
-            continue
-        stops_df["score"] = stops_df["dist"] + (current_sec - stops_df["sched_sec"]) * 5
+        stops_df["score"] = stops_df["dist"] + (abs(current_sec - stops_df["sched_sec"]) * 5)
         nearest = stops_df.loc[stops_df["score"].idxmin()]
-        # -----------------------------------------
+        # -----------------------------------------------------
 
         try:
             h, m, s = [int(x) for x in nearest["arrival_time"].split(":")]
@@ -167,7 +172,6 @@ def create_clean_data(rounds=1, delay_between=0):
 
         # ✅ Proper local timezone alignment
         scheduled = TZ.localize(datetime(ts_dt.year, ts_dt.month, ts_dt.day, h_norm, m, s)) + timedelta(days=day_offset)
-
         delay = (ts_dt - scheduled).total_seconds()
         if abs(delay) > 7200:
             continue
@@ -178,7 +182,7 @@ def create_clean_data(rounds=1, delay_between=0):
             "hour": ts_dt.hour,
             "dow": ts_dt.weekday(),
             "is_weekend": int(ts_dt.weekday() >= 5),
-            "season": ["winter","winter","spring","spring","spring","summer","summer","summer","autumn","autumn","autumn","winter"][ts_dt.month-1],
+            "season": ["winter", "winter", "spring", "spring", "spring", "summer", "summer", "summer", "autumn", "autumn", "autumn", "winter"][ts_dt.month - 1],
             "line_number": line_number,
             "route_id": route_id,
             "trip_id": trip_id,
@@ -204,9 +208,8 @@ def create_clean_data(rounds=1, delay_between=0):
     print(f"✅ Saved {len(df)} total rows → {CSV_PATH}")
 
     if len(df) > 0:
-        top_lines = df["line_number"].value_counts().head(5)
-        print("📊 Top lines:")
-        print(top_lines.to_string())
+        print("\n📊 Average delay by line (minutes):")
+        print(df.groupby("line_number")["delay_minutes"].mean().round(2).sort_values())
 
     return df
 
@@ -237,6 +240,7 @@ if __name__ == "__main__":
     create_clean_data(rounds=1, delay_between=0)
     print("🌐 Starting Flask at http://127.0.0.1:5000")
     app.run(debug=False)
+
 
 
 
