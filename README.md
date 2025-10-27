@@ -9,3 +9,5 @@ https://hsl-delay-prediction-kgnhp9k65e7gjnyi2jfx2u.streamlit.app/
 
 Tableau:
 
+The combined_delays.csv file contains all of the data gathered while randomforestmodel.py contains the model we used to analyse the data.
+
