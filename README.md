@@ -11,3 +11,6 @@ Tableau:
 
 The combined_delays.csv file contains all of the data gathered while randomforestmodel.py contains the model we used to analyse the data.
 
+Interactive dashboard:
+https://public.tableau.com/shared/F8GFDPYJS?:display_count=n&:origin=viz_share_link
+
