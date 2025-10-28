@@ -5,7 +5,7 @@ By: Joonas Honkavaara, Prabodha Shyamalee, Eetos Järnefelt
 The project estimates the delays of public transport vehicles in the Helsinki metropolitan area.
 
 Interactive website:
-https://hsl-delay-prediction-kgnhp9k65e7gjnyi2jfx2u.streamlit.app/
+https://hsl-delay-prediction.streamlit.app/
 
 Tableau: 
 https://public.tableau.com/shared/F8GFDPYJS?:display_count=n&:origin=viz_share_link
